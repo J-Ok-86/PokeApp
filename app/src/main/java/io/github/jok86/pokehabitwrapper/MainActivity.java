@@ -33,8 +33,14 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 import java.util.Collections;
 
 /** Thin remote GitHub Pages WebView wrapper; native code only owns reminders and file handoff. */
@@ -55,6 +61,8 @@ public final class MainActivity extends Activity {
     private boolean geoSystemPermissionDialogActive;
     private String pendingWalkUser="";
     private String pendingBriefingKind="",pendingBriefingUser="";
+    private boolean webRefreshInProgress=false;
+    private String checkedWebVersion="";
 
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
@@ -103,6 +111,16 @@ public final class MainActivity extends Activity {
                     // The native frame has ALREADY consumed the Android navigation
                     // bar inset. Prevent Web CSS from reserving it a second time.
                     view.evaluateJavascript(NATIVE_APPEARANCE_SCRIPT,null);
+                    if(webRefreshInProgress){
+                        webRefreshInProgress=false;
+                        view.getSettings().setCacheMode(WebSettings.LOAD_DEFAULT);
+                        view.evaluateJavascript("document.title",title->{
+                            if(title!=null&&title.contains("v"+checkedWebVersion))
+                                show("웹 v"+checkedWebVersion+" 새로고침 완료. 기록 데이터는 유지됩니다.");
+                            else
+                                show("새 페이지의 버전이 확인되지 않습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.");
+                        });
+                    }
                     // Remove a previous WebView-origin denial left by older versions.
                     // We do not retain new grants, and Android's runtime permission still rules.
                     GeolocationPermissions.getInstance().clear(TRUSTED_ORIGIN);
@@ -250,7 +268,7 @@ public final class MainActivity extends Activity {
     }
     private void status(androidx.webkit.JavaScriptReplyProxy proxy){
         JSONObject obj=response("status","");
-        try{obj.put("exact",AlarmStore.exactGranted(this));obj.put("notifications",AlarmStore.notificationsGranted(this));obj.put("notice",AlarmStore.status(this));obj.put("usageAccess",SleepEstimator.permission(this));
+        try{obj.put("exact",AlarmStore.exactGranted(this));obj.put("notifications",AlarmStore.notificationsGranted(this));obj.put("notice",AlarmStore.status(this));obj.put("webRefreshSupported",true);obj.put("usageAccess",SleepEstimator.permission(this));
             if(SleepEstimator.permission(this))obj.put("sleepEstimates",SleepEstimator.estimates(this));
             obj.put("widgetLogs",NativeLogStore.pending(this,NativeLogStore.activeUser(this)));
             obj.put("walkLogs",WalkTracker.pending(this,NativeLogStore.activeUser(this)));
@@ -313,6 +331,7 @@ public final class MainActivity extends Activity {
                     applySystemBarTheme(!"dark".equals(msg.optString("theme","light")));
                     break;
                 case "status":status(proxy);break;
+                case "refreshWeb":refreshWebSafely(proxy);break;
                 case "test":
                     if(AlarmStore.notificationsGranted(this)){AlarmStore.test(this);reply(proxy,response("info","테스트 알림을 보냈습니다. 휴대폰 알림창에서 확인하세요."));}
                     else reply(proxy,response("info","알림 권한이 없습니다. 먼저 권한 요청을 눌러 주세요."));
@@ -341,6 +360,59 @@ public final class MainActivity extends Activity {
                 default:break;
             }
         }catch(Exception e){reply(proxy,response("info","Android 연결 오류: "+String.valueOf(e.getMessage()).substring(0,Math.min(120,String.valueOf(e.getMessage()).length()))));}
+    }
+    // v1.0.14: Verify GitHub Pages availability/version BEFORE touching the cache.
+    // WebView.clearCache(true) is HTTP resource cache only: NEVER clear WebStorage,
+    // cookies, app data or the offline cache when remote verification fails.
+    private void refreshWebSafely(androidx.webkit.JavaScriptReplyProxy proxy){
+        if(webRefreshInProgress){reply(proxy,response("webRefresh","이미 새로고침을 진행하고 있습니다."));return;}
+        webRefreshInProgress=true;
+        reply(proxy,response("webRefresh","GitHub Pages에서 최신 버전을 확인하는 중입니다…"));
+        new Thread(()->{
+            String remoteVersion="";
+            String error="";
+            HttpURLConnection connection=null;
+            try{
+                URL url=new URL(APP_URL+"index.html?verify="+System.currentTimeMillis());
+                connection=(HttpURLConnection)url.openConnection();
+                connection.setRequestMethod("GET");
+                connection.setConnectTimeout(8000);
+                connection.setReadTimeout(8000);
+                connection.setUseCaches(false);
+                connection.setRequestProperty("Cache-Control","no-cache, no-store");
+                if(connection.getResponseCode()!=200)throw new java.io.IOException("서버 응답 "+connection.getResponseCode());
+                ByteArrayOutputStream out=new ByteArrayOutputStream();
+                try(InputStream in=connection.getInputStream()){
+                    byte[] buffer=new byte[2048];int read;
+                    while(out.size()<16384&&(read=in.read(buffer))!=-1)out.write(buffer,0,Math.min(read,16384-out.size()));
+                }
+                String html=out.toString(StandardCharsets.UTF_8.name());
+                Matcher match=Pattern.compile("<title>[^<]*?v(\\d+\\.\\d+\\.\\d+)",Pattern.CASE_INSENSITIVE).matcher(html);
+                if(!match.find())throw new java.io.IOException("웹 버전 정보가 확인되지 않습니다.");
+                remoteVersion=match.group(1);
+            }catch(Exception e){error=e.getMessage()==null?"네트워크 확인 실패":e.getMessage();}
+            finally{if(connection!=null)connection.disconnect();}
+            final String version=remoteVersion,failed=error;
+            runOnUiThread(()->{
+                if(web==null){webRefreshInProgress=false;return;}
+                if(!failed.isEmpty()){
+                    webRefreshInProgress=false;
+                    sendWebRefreshResult("최신 버전 확인 실패: "+failed+" · 기존 화면과 기록을 그대로 유지합니다.");
+                    return;
+                }
+                checkedWebVersion=version;
+                sendWebRefreshResult("서버 웹 v"+version+" 확인 · 화면을 새로 불러오는 중입니다…");
+                // This does NOT erase localStorage, IndexedDB, preferences, or cookies.
+                web.clearCache(true);
+                web.getSettings().setCacheMode(WebSettings.LOAD_NO_CACHE);
+                web.loadUrl(APP_URL+"?web_refresh="+System.currentTimeMillis());
+            });
+        },"PokeHabit-WebRefresh").start();
+    }
+    private void sendWebRefreshResult(String message){
+        if(web==null||!isTrustedAppPath(Uri.parse(web.getUrl()==null?"":web.getUrl())))return;
+        JSONObject result=response("webRefresh",message);
+        web.evaluateJavascript("if(typeof nativeAlarmMessage==='function')nativeAlarmMessage({data:"+JSONObject.quote(result.toString())+"})",null);
     }
     private boolean hasLocationPermission(){
         return checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED
@@ -391,7 +463,7 @@ public final class MainActivity extends Activity {
     private void updateStatusInWeb(){
         if(web==null||!bridgeAvailable||!isTrustedAppPath(Uri.parse(web.getUrl()==null?"":web.getUrl())))return;
         JSONObject obj=response("status","");
-        try{obj.put("exact",AlarmStore.exactGranted(this));obj.put("notifications",AlarmStore.notificationsGranted(this));obj.put("notice",AlarmStore.status(this));obj.put("usageAccess",SleepEstimator.permission(this));
+        try{obj.put("exact",AlarmStore.exactGranted(this));obj.put("notifications",AlarmStore.notificationsGranted(this));obj.put("notice",AlarmStore.status(this));obj.put("webRefreshSupported",true);obj.put("usageAccess",SleepEstimator.permission(this));
             if(SleepEstimator.permission(this))obj.put("sleepEstimates",SleepEstimator.estimates(this));
             obj.put("widgetLogs",NativeLogStore.pending(this,NativeLogStore.activeUser(this)));
             obj.put("walkLogs",WalkTracker.pending(this,NativeLogStore.activeUser(this)));

@@ -1,29 +1,23 @@
-# PokeHabit APK v1.0.3 — 갤럭시에서 업데이트
+# PokeHabit APK v1.0.14 — 업데이트 방법
 
-이번 변경은 APK Wrapper 전용입니다. GitHub Pages의 HTML이나 기존 JSON 파일 형식은 변경하지 않습니다.
+웹 화면은 v1.7.140 이상이어야 합니다. **웹 ZIP을 먼저 GitHub Pages 저장소에 배포**하고, APK 프로젝트 ZIP을 별도의 Android 저장소에 적용하세요.
 
-## 갤럭시 Codespaces
-
-1. `PokeHabit_v1.0.3_APK_Code_Patch.zip`을 다운로드 → Codespaces PokeApp 루트에 업로드
-2. 터미널에 붙여넣기:
+## APK 프로젝트 소스 반영 (GitHub Codespaces / Bash)
 
 ```bash
-unzip -o PokeHabit_v1.0.3_APK_Code_Patch.zip
-bash scripts/prepare-signing.sh
+unzip -o PokeHabit_Android_Wrapper_v1.0.14_Web_Refresh_Full_Source.zip
+rm -f PokeHabit_Android_Wrapper_v1.0.14_Web_Refresh_Full_Source.zip
 git add -A
-git commit -m "Fix APK font, status bar, stable signing"
+git commit -m "PokeHabit Android v1.0.14 safe web refresh"
 git push origin main
 ```
 
-3. GitHub Actions에서 **Build PokeHabit Android APK**가 성공하면 **Artifacts** → `PokeHabit-wrapper-debug-apk` 다운로드 → 압축 해제 → `app-debug.apk` 설치
+GitHub Actions의 **Build PokeHabit Android APK → Artifacts**에서 APK를 내려받아 설치합니다. ZIP은 설치 파일이 아닌 빌드 소스입니다.
 
-## 업데이트 가능 여부
+**기존 고정 서명키 시크릿 `POKEHABIT_DEBUG_KEYSTORE_B64`는 수정하지 마세요.** 이 시크릿이 없다면 빌드가 서명을 임의 생성하지 않고 실패하도록 되어 있습니다.
 
-- 기존 v1.0.0 APK는 빌드 당시 임시 서명키를 사용했습니다. 새 키로 생성한 v1.0.3 APK는 **기존 앱 위에 설치되지 않을 수 있습니다**. 그때는 백업 후 한 번 제거·재설치해야 합니다.
-- 이후에는 서명키를 GitHub Secret에 고정했으므로 다음 v1.0.4부터 앱 삭제 없이 덮어 설치할 수 있습니다(패키지 ID 유지, versionCode 증가).
-- 앱 제거 시 데이터가 삭제되므로 **먼저 JSON Save** 해야 합니다.
+업데이트 이후 **APK → 설정 → 앱 관리 → 최신 웹 버전 확인 및 새로고침**을 사용할 수 있습니다. 서버 연결 실패 때는 기존 화면 유지, 연결 성공 때에는 WebView 화면 캐시만 갱신하며 저장 데이터는 삭제하지 않습니다.
 
-## 보안
+**주의:** 자동 저장이 꺼져 있거나 저장에 실패했다면 기능이 실행되지 않습니다. 설치나 테스트 전에 JSON 백업을 권장합니다.
 
-GitHub Actions Secrets에 저장되는 값: `POKEHABIT_DEBUG_KEYSTORE_B64`. 이 비밀값은 공개 GitHub 저장소 코드에 올라가지 않습니다.
-스크립트에서 GitHub Secrets 조회 권한 오류가 나오면 새 키를 반복 생성하지 말고 오류 화면을 공유해 주세요.
+APK Android 실기기에서의 빌드 및 동작 검증은 아직 수행하지 않았습니다.
