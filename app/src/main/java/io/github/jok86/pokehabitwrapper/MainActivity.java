@@ -318,6 +318,22 @@ public final class MainActivity extends Activity {
                     else reply(proxy,response("info","알림 권한이 없습니다. 먼저 권한 요청을 눌러 주세요."));
                     break;
                 case "clear":AlarmStore.replace(this,"",new JSONArray());status(proxy);break;
+                case "shareText":{
+                    // A deliberate user click in the trusted GitHub Pages WebView is required.
+                    String shareText=msg.optString("text", "");
+                    String shareTitle=msg.optString("title", "PokeHabit 기록 분석");
+                    if(shareText.isEmpty()||shareText.length()>60000){
+                        reply(proxy,response("info","공유할 기록이 너무 길거나 비어 있어요. 기간을 조정해 주세요."));
+                        break;
+                    }
+                    Intent send=new Intent(Intent.ACTION_SEND);
+                    send.setType("text/plain");
+                    send.putExtra(Intent.EXTRA_SUBJECT,shareTitle);
+                    send.putExtra(Intent.EXTRA_TEXT,shareText);
+                    try{startActivity(Intent.createChooser(send,"기록 공유"));}
+                    catch(Exception e){reply(proxy,response("info","공유 메뉴를 열 수 없습니다. 복사를 이용해 주세요."));}
+                    break;
+                }
                 case "exit":finish();break;
                 case "fileBegin": fileBegin(msg,proxy);break;
                 case "fileChunk": fileChunk(msg,proxy);break;
