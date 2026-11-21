@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.util.Base64;
+import android.util.Log;
 import android.webkit.CookieManager;
 import android.webkit.ValueCallback;
 import android.webkit.GeolocationPermissions;
@@ -51,6 +52,7 @@ public final class MainActivity extends Activity {
     private boolean bridgeAvailable;
     private GeolocationPermissions.Callback pendingGeoCallback;
     private String pendingGeoOrigin;
+    private boolean geoSystemPermissionDialogActive;
 
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
@@ -98,34 +100,55 @@ public final class MainActivity extends Activity {
                     // The native frame has ALREADY consumed the Android navigation
                     // bar inset. Prevent Web CSS from reserving it a second time.
                     view.evaluateJavascript(NATIVE_APPEARANCE_SCRIPT,null);
+                    // Remove a previous WebView-origin denial left by older versions.
+                    // We do not retain new grants, and Android's runtime permission still rules.
+                    GeolocationPermissions.getInstance().clear(TRUSTED_ORIGIN);
+                    GeolocationPermissions.getInstance().clear(TRUSTED_ORIGIN+"/");
                 }
             }
         });
         web.setWebChromeClient(new WebChromeClient(){
             @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback){
-                // Only allow location for the first-party GitHub Pages app.
-                // Other origins or iframes cannot obtain Android location access.
-                if(!TRUSTED_ORIGIN.equals(origin)||web==null||
-                   !isTrustedAppPath(Uri.parse(web.getUrl()==null?"":web.getUrl()))){
+                // The WebView supplies an ORIGIN, not necessarily the literal URL string.
+                // For example, https://j-ok-86.github.io/ and :443 are the same trusted
+                // HTTPS origin. Never grant a different host, scheme, port or top-level page.
+                if(!TrustedGeoOrigin.accepts(origin,web==null?null:web.getUrl())){
+                    Log.w("PokeGeo","WebView location denied: untrusted origin or main frame");
                     callback.invoke(origin,false,false);return;
                 }
                 if(hasLocationPermission()){
+                    Log.i("PokeGeo","WebView location granted from existing Android permission");
                     callback.invoke(origin,true,false);return;
                 }
-                // Request at point of use, not when the app starts.
-                // Do not persist the WebView grant; runtime permission can be revoked.
-                clearPendingGeolocation(false);
+                // Prompt only when a trusted page asks for location.
+                // Retain=false keeps the WebView decision tied to Android permissions.
+                if(pendingGeoCallback!=null){
+                    Log.w("PokeGeo","Superseded pending WebView geolocation prompt");
+                    clearPendingGeolocation(false);
+                }
                 pendingGeoOrigin=origin;
                 pendingGeoCallback=callback;
                 if(Build.VERSION.SDK_INT>=23){
-                    requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION,
-                        Manifest.permission.ACCESS_FINE_LOCATION},ASK_GEOLOCATION);
+                    geoSystemPermissionDialogActive=true;
+                    try {
+                        requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION,
+                            Manifest.permission.ACCESS_FINE_LOCATION},ASK_GEOLOCATION);
+                    }catch(Exception e){
+                        geoSystemPermissionDialogActive=false;
+                        Log.e("PokeGeo","Android location permission request failed",e);
+                        clearPendingGeolocation(false);
+                    }
                 }else{
-                    clearPendingGeolocation(true);
+                    clearPendingGeolocation(hasLocationPermission());
                 }
             }
             @Override public void onGeolocationPermissionsHidePrompt(){
-                // Ignore a permission result if the page withdrew its request.
+                // A system permission dialog may temporarily hide the WebView prompt.
+                // Do not discard its callback until Android returns the permission result.
+                if(geoSystemPermissionDialogActive){
+                    Log.i("PokeGeo","Keeping pending callback while Android permission dialog is active");
+                    return;
+                }
                 clearPendingGeolocation(false);
             }
             @Override public boolean onShowFileChooser(WebView view,ValueCallback<Uri[]> cb,FileChooserParams params){
@@ -142,7 +165,7 @@ public final class MainActivity extends Activity {
         if(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)){
             WebViewCompat.addWebMessageListener(web,"PokeNative",Collections.singleton(TRUSTED_ORIGIN),
                 (view,message,origin,isMainFrame,reply)->{
-                    if(!isMainFrame||origin==null||!TRUSTED_ORIGIN.equals(origin.toString())||!isTrustedAppPath(Uri.parse(view.getUrl()==null?"":view.getUrl())))return;
+                    if(!isMainFrame||origin==null||!TrustedGeoOrigin.accepts(origin.toString(),view.getUrl()))return;
                     String raw=message.getData();
                     runOnUiThread(()->handleMessage(raw,reply));
                 });
@@ -265,7 +288,10 @@ public final class MainActivity extends Activity {
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
         super.onRequestPermissionsResult(requestCode,permissions,results);
         if(requestCode==ASK_GEOLOCATION){
+            geoSystemPermissionDialogActive=false;
             boolean allowed=hasLocationPermission();
+            Log.i("PokeGeo", allowed ? "Android location allowed; returning WebView grant" :
+                "Android location denied; returning WebView denial");
             clearPendingGeolocation(allowed);
             if(!allowed)show("위치를 사용하려면 PokeHabit 위치 권한을 허용해 주세요.");
         }else if(requestCode==ASK_NOTIFICATIONS){
@@ -339,6 +365,7 @@ public final class MainActivity extends Activity {
         }else if(web!=null&&web.canGoBack())web.goBack();else finish();
     }
     @Override protected void onDestroy(){
+        geoSystemPermissionDialogActive=false;
         clearPendingGeolocation(false);
         closeStream();if(web!=null){web.destroy();web=null;}super.onDestroy();
     }

@@ -2,8 +2,7 @@ plugins {
     id 'com.android.application'
 }
 
-// Always sign the debug APK with the explicitly supplied persistent key.
-// NEVER allow Android Gradle Plugin to create a new ~/.android/debug.keystore.
+// Fail closed: never silently sign a new APK with the build machine's random debug key.
 def stableKeystorePath = System.getenv('POKEHABIT_SIGNING_KEYSTORE') ?: "${System.getProperty('user.home')}/.config/pokehabit-private/debug.keystore"
 if (!file(stableKeystorePath).isFile()) {
     throw new GradleException("PokeHabit fixed signing keystore missing: ${stableKeystorePath}. Build stopped instead of producing an APK with a different signature.")
@@ -16,8 +15,8 @@ android {
         applicationId 'io.github.jok86.pokehabitwrapper'
         minSdk 26
         targetSdk 35
-        versionCode 7
-        versionName '1.0.6'
+        versionCode 8
+        versionName '1.0.7'
     }
     signingConfigs {
         stableDebug {

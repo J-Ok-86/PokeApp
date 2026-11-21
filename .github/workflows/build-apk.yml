@@ -5,6 +5,8 @@ on:
     branches: [ main ]
     paths:
       - 'app/**'
+      - 'tests/**'
+      - 'scripts/qa-geolocation.sh'
       - 'build.gradle'
       - 'settings.gradle'
       - 'gradle.properties'
@@ -20,6 +22,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Verify origin security and WebView permission flow source
+        run: bash scripts/qa-geolocation.sh
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
@@ -58,8 +62,10 @@ jobs:
             echo '::error::apksigner unavailable; refusing unverified APK.'
             exit 1
           fi
-          "$APKSIGNER" verify --verbose --print-certs "$APK"
-          ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^.*certificate SHA-256 digest: //p' | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':')
+          CERT_REPORT=$("$APKSIGNER" verify --verbose --print-certs "$APK")
+          printf '%s\n' "$CERT_REPORT"
+          # apksigner 35 prints "V2 Signer: certificate ..." (NOT "Signer #1 ...").
+          ACTUAL=$(printf '%s\n' "$CERT_REPORT" | sed -n 's/^.*certificate SHA-256 digest: //p' | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':')
           echo "Expected fixed key SHA-256: $POKEHABIT_EXPECTED_CERT_SHA256"
           echo "APK signer SHA-256:          $ACTUAL"
           if [ -z "$ACTUAL" ] || [ "$ACTUAL" != "$POKEHABIT_EXPECTED_CERT_SHA256" ]; then
