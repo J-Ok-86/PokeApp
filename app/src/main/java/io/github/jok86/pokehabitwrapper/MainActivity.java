@@ -12,6 +12,7 @@ import android.provider.Settings;
 import android.util.Base64;
 import android.webkit.CookieManager;
 import android.webkit.ValueCallback;
+import android.webkit.GeolocationPermissions;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -39,7 +40,7 @@ import java.util.Collections;
 public final class MainActivity extends Activity {
     private static final String APP_URL="https://j-ok-86.github.io/PokeHabit/";
     private static final String TRUSTED_ORIGIN="https://j-ok-86.github.io";
-    private static final int PICK_IMPORT=4101,SAVE_JSON=4102,ASK_NOTIFICATIONS=4103;
+    private static final int PICK_IMPORT=4101,SAVE_JSON=4102,ASK_NOTIFICATIONS=4103,ASK_GEOLOCATION=4104;
     private WebView web;
     private android.widget.FrameLayout appRoot;
     private ValueCallback<Uri[]> filePicker;
@@ -48,6 +49,8 @@ public final class MainActivity extends Activity {
     private String downloadToken="",downloadName="";
     private long downloadExpected,downloadReceived;
     private boolean bridgeAvailable;
+    private GeolocationPermissions.Callback pendingGeoCallback;
+    private String pendingGeoOrigin;
 
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
@@ -77,6 +80,7 @@ public final class MainActivity extends Activity {
         ws.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.NORMAL);
         ws.setTextZoom(100);
         ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);
+        ws.setGeolocationEnabled(true);
         ws.setDatabaseEnabled(true);ws.setAllowFileAccess(false);ws.setAllowContentAccess(true);
         ws.setAllowFileAccessFromFileURLs(false);ws.setAllowUniversalAccessFromFileURLs(false);
         ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
@@ -98,6 +102,32 @@ public final class MainActivity extends Activity {
             }
         });
         web.setWebChromeClient(new WebChromeClient(){
+            @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback){
+                // Only allow location for the first-party GitHub Pages app.
+                // Other origins or iframes cannot obtain Android location access.
+                if(!TRUSTED_ORIGIN.equals(origin)||web==null||
+                   !isTrustedAppPath(Uri.parse(web.getUrl()==null?"":web.getUrl()))){
+                    callback.invoke(origin,false,false);return;
+                }
+                if(hasLocationPermission()){
+                    callback.invoke(origin,true,false);return;
+                }
+                // Request at point of use, not when the app starts.
+                // Do not persist the WebView grant; runtime permission can be revoked.
+                clearPendingGeolocation(false);
+                pendingGeoOrigin=origin;
+                pendingGeoCallback=callback;
+                if(Build.VERSION.SDK_INT>=23){
+                    requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION,
+                        Manifest.permission.ACCESS_FINE_LOCATION},ASK_GEOLOCATION);
+                }else{
+                    clearPendingGeolocation(true);
+                }
+            }
+            @Override public void onGeolocationPermissionsHidePrompt(){
+                // Ignore a permission result if the page withdrew its request.
+                clearPendingGeolocation(false);
+            }
             @Override public boolean onShowFileChooser(WebView view,ValueCallback<Uri[]> cb,FileChooserParams params){
                 if(filePicker!=null)filePicker.onReceiveValue(null);
                 filePicker=cb;
@@ -209,6 +239,17 @@ public final class MainActivity extends Activity {
             }
         }catch(Exception e){reply(proxy,response("info","Android 연결 오류: "+String.valueOf(e.getMessage()).substring(0,Math.min(120,String.valueOf(e.getMessage()).length()))));}
     }
+    private boolean hasLocationPermission(){
+        return checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED
+            ||checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED;
+    }
+    private void clearPendingGeolocation(boolean granted){
+        GeolocationPermissions.Callback cb=pendingGeoCallback;
+        String origin=pendingGeoOrigin;
+        pendingGeoCallback=null;
+        pendingGeoOrigin=null;
+        if(cb!=null&&origin!=null)cb.invoke(origin,granted,false);
+    }
     private void requestAlarmPermissions(){
         if(Build.VERSION.SDK_INT>=33&&!AlarmStore.notificationsGranted(this)){
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},ASK_NOTIFICATIONS);return;
@@ -223,7 +264,11 @@ public final class MainActivity extends Activity {
     }
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
         super.onRequestPermissionsResult(requestCode,permissions,results);
-        if(requestCode==ASK_NOTIFICATIONS){
+        if(requestCode==ASK_GEOLOCATION){
+            boolean allowed=hasLocationPermission();
+            clearPendingGeolocation(allowed);
+            if(!allowed)show("위치를 사용하려면 PokeHabit 위치 권한을 허용해 주세요.");
+        }else if(requestCode==ASK_NOTIFICATIONS){
             if(AlarmStore.notificationsGranted(this))requestExactPermission();
             else show("알림이 차단되어 있습니다. 앱 설정에서 알림을 허용하세요.");
             updateStatusInWeb();
@@ -293,6 +338,9 @@ public final class MainActivity extends Activity {
             });
         }else if(web!=null&&web.canGoBack())web.goBack();else finish();
     }
-    @Override protected void onDestroy(){closeStream();if(web!=null){web.destroy();web=null;}super.onDestroy();}
+    @Override protected void onDestroy(){
+        clearPendingGeolocation(false);
+        closeStream();if(web!=null){web.destroy();web=null;}super.onDestroy();
+    }
     private void show(String msg){Toast.makeText(this,msg,Toast.LENGTH_LONG).show();}
 }
