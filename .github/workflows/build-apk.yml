@@ -59,7 +59,7 @@ jobs:
             exit 1
           fi
           "$APKSIGNER" verify --verbose --print-certs "$APK"
-          ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':')
+          ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^.*certificate SHA-256 digest: //p' | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':')
           echo "Expected fixed key SHA-256: $POKEHABIT_EXPECTED_CERT_SHA256"
           echo "APK signer SHA-256:          $ACTUAL"
           if [ -z "$ACTUAL" ] || [ "$ACTUAL" != "$POKEHABIT_EXPECTED_CERT_SHA256" ]; then
