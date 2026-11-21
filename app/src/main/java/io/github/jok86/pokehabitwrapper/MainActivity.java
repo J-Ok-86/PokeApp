@@ -48,8 +48,34 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
         AlarmStore.ensureChannel(this);
-        web=new WebView(this);setContentView(web);
+        web = new WebView(this);
+        // Android 15+ enforces edge-to-edge for targetSdk 35. Keep the HTML
+        // below the system status bar (and above the navigation bar) instead
+        // of allowing the status icons to overlap PokeHabit's clock/weather.
+        android.widget.FrameLayout appRoot = new android.widget.FrameLayout(this);
+        appRoot.setBackgroundColor(android.graphics.Color.rgb(14, 33, 59));
+        appRoot.addView(web, new android.widget.FrameLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        if (Build.VERSION.SDK_INT >= 35) {
+            appRoot.setOnApplyWindowInsetsListener((view, insets) -> {
+                android.graphics.Insets bars = insets.getInsets(
+                    android.view.WindowInsets.Type.systemBars());
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                return insets;
+            });
+        }
+        setContentView(appRoot);
         WebSettings ws=web.getSettings();
+        // Chrome-like mobile viewport instead of WebView's default narrow-column layout.
+        // Keep the HTML's own small/normal/large/xlarge preference untouched.
+        ws.setUseWideViewPort(true);
+        ws.setLoadWithOverviewMode(false);
+        ws.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING);
+        // Android WebView text rendering can be smaller than Chrome. This is a
+        // wrapper-only readable baseline, not an app preference or JSON setting.
+        int deviceTextZoom = Math.round(getResources().getConfiguration().fontScale * 100f);
+        ws.setTextZoom(Math.max(115, Math.min(140, deviceTextZoom)));
         ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);
         ws.setDatabaseEnabled(true);ws.setAllowFileAccess(false);ws.setAllowContentAccess(true);
         ws.setAllowFileAccessFromFileURLs(false);ws.setAllowUniversalAccessFromFileURLs(false);
