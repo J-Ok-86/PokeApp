@@ -245,7 +245,7 @@ public final class MainActivity extends Activity {
                     JSONArray items=msg.optJSONArray("items");if(items==null)return;
                     int n=AlarmStore.replace(this,user,items);
                     JSONArray buttons=msg.optJSONArray("widgetButtons");
-                    if(buttons!=null)NativeLogStore.configure(this,user,buttons);
+                    if(buttons!=null)NativeLogStore.configure(this,user,buttons,msg.optJSONArray("widgetRecords"));
                     status(proxy);break;
                 }
                 case "permissions": requestAlarmPermissions();status(proxy);break;
