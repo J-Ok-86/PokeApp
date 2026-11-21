@@ -17,6 +17,9 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.graphics.Color;
+import android.view.View;
+import android.view.WindowInsetsController;
 import android.widget.Toast;
 
 import androidx.webkit.WebViewCompat;
@@ -38,6 +41,7 @@ public final class MainActivity extends Activity {
     private static final String TRUSTED_ORIGIN="https://j-ok-86.github.io";
     private static final int PICK_IMPORT=4101,SAVE_JSON=4102,ASK_NOTIFICATIONS=4103;
     private WebView web;
+    private android.widget.FrameLayout appRoot;
     private ValueCallback<Uri[]> filePicker;
     private FileOutputStream downloadStream;
     private File pendingDownload;
@@ -49,11 +53,10 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         AlarmStore.ensureChannel(this);
         web = new WebView(this);
-        // Android 15+ enforces edge-to-edge for targetSdk 35. Keep the HTML
-        // below the system status bar (and above the navigation bar) instead
-        // of allowing the status icons to overlap PokeHabit's clock/weather.
-        android.widget.FrameLayout appRoot = new android.widget.FrameLayout(this);
-        appRoot.setBackgroundColor(android.graphics.Color.rgb(14, 33, 59));
+        // Android 15+ draws system bars edge-to-edge. The native root owns the
+        // insets; the HTML must NOT add a second safe-area footer spacer.
+        appRoot = new android.widget.FrameLayout(this);
+        applySystemBarTheme(true); // PokeRoutine's initial light theme.
         appRoot.addView(web, new android.widget.FrameLayout.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.MATCH_PARENT));
@@ -67,15 +70,12 @@ public final class MainActivity extends Activity {
         }
         setContentView(appRoot);
         WebSettings ws=web.getSettings();
-        // Chrome-like mobile viewport instead of WebView's default narrow-column layout.
-        // Keep the HTML's own small/normal/large/xlarge preference untouched.
+        // Match Chrome PWA's CSS viewport and text sizing exactly. The old
+        // 115-140% text zoom + TEXT_AUTOSIZING made small fonts appear huge.
         ws.setUseWideViewPort(true);
         ws.setLoadWithOverviewMode(false);
-        ws.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING);
-        // Android WebView text rendering can be smaller than Chrome. This is a
-        // wrapper-only readable baseline, not an app preference or JSON setting.
-        int deviceTextZoom = Math.round(getResources().getConfiguration().fontScale * 100f);
-        ws.setTextZoom(Math.max(115, Math.min(140, deviceTextZoom)));
+        ws.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.NORMAL);
+        ws.setTextZoom(100);
         ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);
         ws.setDatabaseEnabled(true);ws.setAllowFileAccess(false);ws.setAllowContentAccess(true);
         ws.setAllowFileAccessFromFileURLs(false);ws.setAllowUniversalAccessFromFileURLs(false);
@@ -87,6 +87,14 @@ public final class MainActivity extends Activity {
                 Uri uri=request.getUrl();
                 if(isTrustedAppPath(uri))return false;
                 openExternal(uri);return true;
+            }
+            @Override public void onPageFinished(WebView view,String url){
+                super.onPageFinished(view,url);
+                if(isTrustedAppPath(Uri.parse(url))){
+                    // The native frame has ALREADY consumed the Android navigation
+                    // bar inset. Prevent Web CSS from reserving it a second time.
+                    view.evaluateJavascript(NATIVE_APPEARANCE_SCRIPT,null);
+                }
             }
         });
         web.setWebChromeClient(new WebChromeClient(){
@@ -114,6 +122,42 @@ public final class MainActivity extends Activity {
         }
         if(state==null)web.loadUrl(APP_URL);else web.restoreState(state);
     }
+    // The WebView uses the PWA's existing HTML/CSS. Only window decoration
+    // and the double-counted Android safe-area padding are adapted here.
+    private static final String NATIVE_APPEARANCE_SCRIPT =
+        "(function(){"+
+        "var root=document.documentElement;"+
+        "root.style.setProperty('--nav-safe','0px');"+
+        "if(window.__pokeNativeAppearanceInstalled)return;"+
+        "window.__pokeNativeAppearanceInstalled=true;"+
+        "function sync(){if(window.PokeNative&&typeof PokeNative.postMessage==='function'){"+
+        "PokeNative.postMessage(JSON.stringify({type:'appearance',theme:root.dataset.theme==='dark'?'dark':'light'}));}}"+
+        "new MutationObserver(sync).observe(root,{attributes:true,attributeFilter:['data-theme']});"+
+        "sync();"+
+        "})()";
+
+    private void applySystemBarTheme(boolean light){
+        int bg=Color.parseColor(light?"#f9fcff":"#0b1d3a");
+        if(appRoot!=null)appRoot.setBackgroundColor(bg);
+        if(web!=null)web.setBackgroundColor(bg);
+        getWindow().setStatusBarColor(bg);
+        getWindow().setNavigationBarColor(bg);
+        if(Build.VERSION.SDK_INT>=29)getWindow().setNavigationBarContrastEnforced(false);
+        if(Build.VERSION.SDK_INT>=30){
+            WindowInsetsController c=getWindow().getInsetsController();
+            if(c!=null){
+                int flags=WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|
+                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                c.setSystemBarsAppearance(light?flags:0,flags);
+            }
+        }else{
+            View decor=getWindow().getDecorView();
+            int bits=View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            if(Build.VERSION.SDK_INT>=26)bits|=View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            decor.setSystemUiVisibility((decor.getSystemUiVisibility()&~bits)|(light?bits:0));
+        }
+    }
+
     private boolean isTrustedAppPath(Uri u){
         return u!=null&&"https".equalsIgnoreCase(u.getScheme())&&"j-ok-86.github.io".equalsIgnoreCase(u.getHost())
             &&(u.getPort()==-1||u.getPort()==443)&&((u.getPath()!=null&&u.getPath().startsWith("/PokeHabit/"))||"/PokeHabit".equals(u.getPath()));
@@ -148,6 +192,9 @@ public final class MainActivity extends Activity {
                     status(proxy);break;
                 }
                 case "permissions": requestAlarmPermissions();status(proxy);break;
+                case "appearance":
+                    applySystemBarTheme(!"dark".equals(msg.optString("theme","light")));
+                    break;
                 case "status":status(proxy);break;
                 case "test":
                     if(AlarmStore.notificationsGranted(this)){AlarmStore.test(this);reply(proxy,response("info","테스트 알림을 보냈습니다. 휴대폰 알림창에서 확인하세요."));}
