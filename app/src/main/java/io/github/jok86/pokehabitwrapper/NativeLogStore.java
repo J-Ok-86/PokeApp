@@ -50,15 +50,22 @@ public final class NativeLogStore {
                     !clock.matches("(?:[01]\\d|2[0-3]):[0-5]\\d")||stamp<=0)continue;
                 recordIds.add(id);
                 JSONObject o=new JSONObject();try{o.put("id",id);o.put("eventId",event);
-                    o.put("day",day);o.put("clock",clock);o.put("timestampMs",stamp);safeRecords.put(o);
+                    o.put("day",day);o.put("clock",clock);o.put("timestampMs",stamp);
+                    if("walk".equals(event))o.put("endClock",v.optString("endClock", ""));safeRecords.put(o);
                 }catch(JSONException ignored){}
             }
         }
+        // Preserve a walking session under its original trainer before switching profiles.
+        if(!prior.isEmpty()&&!prior.equals(user)&&WalkTracker.session(ctx,prior)!=null)WalkTracker.toggle(ctx,prior);
         boolean ok=p.edit().putString("user",user).putString("buttons",clean.toString())
             .putString("records",safeRecords.toString())
             .putString("last",prior.equals(user)?last(ctx):"앱 기록 동기화 완료 · 버튼을 눌러 기록하세요")
             .commit();
         if(ok)TimeLogWidget.refresh(ctx);
+    }
+    private static String clockFromIso(String stamp){
+        try{return new SimpleDateFormat("HH:mm",Locale.US).format(new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX",Locale.US).parse(stamp));}
+        catch(Exception e){return "";}
     }
     private static String today(){return new SimpleDateFormat("yyyy-MM-dd",Locale.US).format(new Date());}
     private static String minusOneDay(){Calendar c=Calendar.getInstance();c.add(Calendar.DATE,-1);
@@ -77,7 +84,7 @@ public final class NativeLogStore {
         SharedPreferences p=prefs(ctx);String user=activeUser(ctx),today=today();
         String nowClock=new SimpleDateFormat("HH",Locale.US).format(new Date());
         String sleepNight=Integer.parseInt(nowClock)<6?minusOneDay():today;
-        JSONArray defs=buttons(ctx),saved=array(p.getString("records","[]")),pending=pending(ctx,user);
+        JSONArray defs=buttons(ctx),saved=array(p.getString("records","[]")),pending=pending(ctx,user),walkPending=WalkTracker.pending(ctx,user);
         Map<String,JSONObject> unique=new LinkedHashMap<>();
         for(int list=0;list<2;list++){
             JSONArray arr=list==0?saved:pending;
@@ -86,19 +93,28 @@ public final class NativeLogStore {
                 String id=r.optString("id");if(!id.isEmpty())unique.put(id,r);
             }
         }
+        for(int i=0;i<walkPending.length();i++){
+            JSONObject w=walkPending.optJSONObject(i);if(w==null)continue;
+            JSONObject row=new JSONObject();try{
+                row.put("id",w.optString("id"));row.put("eventId","walk");row.put("day",w.optString("day"));
+                row.put("clock",w.optString("clock"));row.put("endClock",clockFromIso(w.optString("endAt")));
+                row.put("timestampMs",new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX",Locale.US).parse(w.optString("endAt")).getTime());
+                unique.put(row.optString("id"),row);
+            }catch(Exception ignored){}
+        }
         JSONObject out=new JSONObject();
         for(int i=0;i<defs.length();i++){
             JSONObject def=defs.optJSONObject(i);if(def==null)continue;
             String key=def.optString("id"),target="sleep".equals(key)?sleepNight:today;
             boolean repeat="repeat".equals(def.optString("mode"));
-            int count=0;long latest=Long.MIN_VALUE;String clock="";
+            int count=0;long latest=Long.MIN_VALUE;String clock="",endClock="";
             for(JSONObject log:unique.values()){
                 if(!key.equals(log.optString("eventId"))||!target.equals(logicalDay(log)))continue;
                 count++;long when=log.optLong("timestampMs",0);
-                if(when>=latest){latest=when;clock=log.optString("clock","");}
+                if(when>=latest){latest=when;clock=log.optString("clock","");endClock=log.optString("endClock","");}
             }
             JSONObject info=new JSONObject();try{
-                info.put("count",repeat?count:(count>0?1:0));info.put("clock",clock);out.put(key,info);
+                info.put("count",repeat?count:(count>0?1:0));info.put("clock",clock);info.put("endClock",endClock);out.put(key,info);
             }catch(JSONException ignored){}
         }
         return out;

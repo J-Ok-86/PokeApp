@@ -70,6 +70,9 @@ public final class AlarmStore {
         try{clean.put("id",id);clean.put("time",time);clean.put("title",title.substring(0,Math.min(80,title.length())));
            clean.put("enabled",r.optBoolean("enabled",true));clean.put("repeat",repeat);
            clean.put("date",r.optString("date"));clean.put("questId",r.optString("questId"));
+           String briefing="briefing".equals(r.optString("kind"))?r.optString("briefingKind"):"";
+           if(!"morning".equals(briefing)&&!"evening".equals(briefing))briefing="";
+           clean.put("briefingKind",briefing);
            clean.put("weekday",Math.max(0,Math.min(6,r.optInt("weekday",1))));
            JSONArray days=new JSONArray();JSONArray input=r.optJSONArray("days");if(input!=null)for(int d=0;d<input.length();d++){int n=input.optInt(d,-1);if(n>=0&&n<=6)days.put(n);}clean.put("days",days);
            valid.put(clean);}catch(JSONException ignored){}
@@ -93,9 +96,16 @@ public final class AlarmStore {
     SharedPreferences p=prefs(c);String key="fired_"+id;if(date.equals(p.getString(key,"")))return;
     p.edit().putString(key,date).apply();if(!notificationsGranted(c))return;
     ensureChannel(c);NotificationManager mgr=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);if(mgr==null)return;
+    String brief=r.optString("briefingKind","");
     Intent open=new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
-    PendingIntent tap=PendingIntent.getActivity(c,0,open,PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
-    String sub=r.optString("questId").isEmpty()?"설정한 알림 시간입니다.":"퀘스트를 시작할 시간이에요.";
+    if("morning".equals(brief)||"evening".equals(brief)){
+        open.putExtra("briefing_kind",brief);open.putExtra("briefing_user",prefs(c).getString(USER,""));
+    }
+    // Never share requestCode=0 between morning/evening/quest notifications.
+    PendingIntent tap=PendingIntent.getActivity(c,id.hashCode(),open,PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
+    String sub="morning".equals(brief)?"오늘의 계획과 퀘스트를 확인하세요.":
+        "evening".equals(brief)?"오늘의 퀘스트와 하루 기록을 돌아보세요.":
+        r.optString("questId").isEmpty()?"설정한 알림 시간입니다.":"퀘스트를 시작할 시간이에요.";
     Notification n=new Notification.Builder(c,CHANNEL).setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
        .setContentTitle("🔔 "+r.optString("title","PokeHabit 알림")).setContentText(sub)
        .setAutoCancel(true).setContentIntent(tap).setCategory(Notification.CATEGORY_REMINDER)

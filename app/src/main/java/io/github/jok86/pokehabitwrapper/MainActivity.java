@@ -41,7 +41,7 @@ import java.util.Collections;
 public final class MainActivity extends Activity {
     private static final String APP_URL="https://j-ok-86.github.io/PokeHabit/";
     private static final String TRUSTED_ORIGIN="https://j-ok-86.github.io";
-    private static final int PICK_IMPORT=4101,SAVE_JSON=4102,ASK_NOTIFICATIONS=4103,ASK_GEOLOCATION=4104;
+    private static final int PICK_IMPORT=4101,SAVE_JSON=4102,ASK_NOTIFICATIONS=4103,ASK_GEOLOCATION=4104,ASK_WALK=4105;
     private WebView web;
     private android.widget.FrameLayout appRoot;
     private ValueCallback<Uri[]> filePicker;
@@ -53,9 +53,12 @@ public final class MainActivity extends Activity {
     private GeolocationPermissions.Callback pendingGeoCallback;
     private String pendingGeoOrigin;
     private boolean geoSystemPermissionDialogActive;
+    private String pendingWalkUser="";
+    private String pendingBriefingKind="",pendingBriefingUser="";
 
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
+        captureBriefingIntent(getIntent());
         AlarmStore.ensureChannel(this);
         web = new WebView(this);
         // Android 15+ draws system bars edge-to-edge. The native root owns the
@@ -211,6 +214,24 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void captureBriefingIntent(Intent intent){
+        if(intent==null)return;
+        String kind=intent.getStringExtra("briefing_kind"),user=intent.getStringExtra("briefing_user");
+        if(("morning".equals(kind)||"evening".equals(kind))&&user!=null&&user.matches("[a-zA-Z0-9_-]{2,24}")){
+            pendingBriefingKind=kind;pendingBriefingUser=user;
+        }
+    }
+    private void addPendingBriefing(JSONObject obj){
+        if(pendingBriefingKind.isEmpty()||pendingBriefingUser.isEmpty())return;
+        try{obj.put("openBriefing",pendingBriefingKind);obj.put("openBriefingUser",pendingBriefingUser);
+            pendingBriefingKind="";pendingBriefingUser="";}catch(Exception ignored){}
+    }
+    @Override protected void onNewIntent(Intent intent){
+        super.onNewIntent(intent);setIntent(intent);captureBriefingIntent(intent);
+        // Ask JS to fetch the pending intent. Do not consume it before the page/bridge is ready.
+        if(web!=null&&isTrustedAppPath(Uri.parse(web.getUrl()==null?"":web.getUrl())))
+            web.evaluateJavascript("if(typeof nativeAlarmStatusRequest==='function')nativeAlarmStatusRequest()",null);
+    }
     private boolean isTrustedAppPath(Uri u){
         return u!=null&&"https".equalsIgnoreCase(u.getScheme())&&"j-ok-86.github.io".equalsIgnoreCase(u.getHost())
             &&(u.getPort()==-1||u.getPort()==443)&&((u.getPath()!=null&&u.getPath().startsWith("/PokeHabit/"))||"/PokeHabit".equals(u.getPath()));
@@ -231,8 +252,13 @@ public final class MainActivity extends Activity {
         JSONObject obj=response("status","");
         try{obj.put("exact",AlarmStore.exactGranted(this));obj.put("notifications",AlarmStore.notificationsGranted(this));obj.put("notice",AlarmStore.status(this));obj.put("usageAccess",SleepEstimator.permission(this));
             if(SleepEstimator.permission(this))obj.put("sleepEstimates",SleepEstimator.estimates(this));
-            obj.put("widgetLogs",NativeLogStore.pending(this,NativeLogStore.activeUser(this)));}catch(Exception ignored){}
-        reply(proxy,obj);
+            obj.put("widgetLogs",NativeLogStore.pending(this,NativeLogStore.activeUser(this)));
+            obj.put("walkLogs",WalkTracker.pending(this,NativeLogStore.activeUser(this)));
+            obj.put("walkPermission",WalkTracker.permissionGranted(this));
+            obj.put("walkSensor",WalkTracker.stepSensorSupported(this));
+            JSONObject walking=WalkTracker.session(this,NativeLogStore.activeUser(this));
+            if(walking!=null)obj.put("walkSession",walking);}catch(Exception ignored){}
+        addPendingBriefing(obj);reply(proxy,obj);
     }
     private void handleMessage(String raw,androidx.webkit.JavaScriptReplyProxy proxy){
         try{
@@ -253,6 +279,31 @@ public final class MainActivity extends Activity {
                     try{startActivity(SleepEstimator.permissionSettings(this));}
                     catch(Exception e){startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS));}
                     status(proxy);break;
+                case "walkPermission":{
+                    if(!WalkTracker.stepSensorSupported(this)){
+                        reply(proxy,response("info","이 기기는 TYPE_STEP_COUNTER 걸음 센서를 지원하지 않습니다. 걷기 시간은 기록됩니다."));
+                    }else if(android.os.Build.VERSION.SDK_INT>=29&&!WalkTracker.permissionGranted(this)){
+                        pendingWalkUser="";
+                        requestPermissions(new String[]{Manifest.permission.ACTIVITY_RECOGNITION},ASK_WALK);
+                    }else status(proxy);
+                    break;
+                }
+                case "walkToggle":{
+                    String actor=msg.optString("userId");
+                    if(!actor.equals(NativeLogStore.activeUser(this))){reply(proxy,response("info","걷기 기록을 위해 앱에서 먼저 계정을 선택해 주세요."));break;}
+                    if(WalkTracker.session(this,actor)==null&&android.os.Build.VERSION.SDK_INT>=29&&
+                        checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION)!=PackageManager.PERMISSION_GRANTED){
+                        pendingWalkUser=actor;
+                        requestPermissions(new String[]{Manifest.permission.ACTIVITY_RECOGNITION},ASK_WALK);
+                        break;
+                    }
+                    WalkTracker.toggle(this,actor);TimeLogWidget.refresh(this);status(proxy);break;
+                }
+                case "ackWalkLogs":{
+                    String actor=msg.optString("userId");JSONArray ids=msg.optJSONArray("ids");
+                    if(actor.equals(NativeLogStore.activeUser(this))&&ids!=null)WalkTracker.acknowledge(this,actor,ids);
+                    break;
+                }
                 case "ackWidgetLogs":{
                     String actor=msg.optString("userId");JSONArray ids=msg.optJSONArray("ids");
                     if(actor.equals(NativeLogStore.activeUser(this))&&ids!=null)NativeLogStore.acknowledge(this,actor,ids);
@@ -307,6 +358,14 @@ public final class MainActivity extends Activity {
                 "Android location denied; returning WebView denial");
             clearPendingGeolocation(allowed);
             if(!allowed)show("위치를 사용하려면 PokeHabit 위치 권한을 허용해 주세요.");
+        }else if(requestCode==ASK_WALK){
+            String actor=pendingWalkUser;pendingWalkUser="";
+            if(!actor.isEmpty()&&actor.equals(NativeLogStore.activeUser(this))){
+                // Even after denial, keep a manual elapsed-time session; steps remain "unmeasured".
+                WalkTracker.toggle(this,actor);TimeLogWidget.refresh(this);
+            }
+            WalkTracker.restoreSensor(this);
+            updateStatusInWeb();
         }else if(requestCode==ASK_NOTIFICATIONS){
             if(AlarmStore.notificationsGranted(this))requestExactPermission();
             else show("알림이 차단되어 있습니다. 앱 설정에서 알림을 허용하세요.");
@@ -318,10 +377,15 @@ public final class MainActivity extends Activity {
         JSONObject obj=response("status","");
         try{obj.put("exact",AlarmStore.exactGranted(this));obj.put("notifications",AlarmStore.notificationsGranted(this));obj.put("notice",AlarmStore.status(this));obj.put("usageAccess",SleepEstimator.permission(this));
             if(SleepEstimator.permission(this))obj.put("sleepEstimates",SleepEstimator.estimates(this));
-            obj.put("widgetLogs",NativeLogStore.pending(this,NativeLogStore.activeUser(this)));}catch(Exception ignored){}
+            obj.put("widgetLogs",NativeLogStore.pending(this,NativeLogStore.activeUser(this)));
+            obj.put("walkLogs",WalkTracker.pending(this,NativeLogStore.activeUser(this)));
+            obj.put("walkPermission",WalkTracker.permissionGranted(this));
+            obj.put("walkSensor",WalkTracker.stepSensorSupported(this));
+            JSONObject walking=WalkTracker.session(this,NativeLogStore.activeUser(this));
+            if(walking!=null)obj.put("walkSession",walking);}catch(Exception ignored){}
         web.evaluateJavascript("if(typeof nativeAlarmMessage==='function')nativeAlarmMessage({data:"+JSONObject.quote(obj.toString())+"})",null);
     }
-    @Override protected void onResume(){super.onResume();AlarmStore.rescheduleAll(this);updateStatusInWeb();}
+    @Override protected void onResume(){super.onResume();AlarmStore.rescheduleAll(this);WalkTracker.restoreSensor(this);updateStatusInWeb();}
     private void fileBegin(JSONObject msg,androidx.webkit.JavaScriptReplyProxy proxy)throws Exception{
         closeStream();
         String token=msg.optString("token"),name=msg.optString("name"),safe=name.replaceAll("[^a-zA-Z0-9._-]","_");

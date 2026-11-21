@@ -54,26 +54,56 @@ public final class SleepEstimator {
             }
         }
      }catch(Exception ex){return result;}
-     // Each morning receives at most one strongest candidate based on a night-time inactivity gap.
+     // Consider a long overnight usage gap and allow one SHORT cluster of night-time
+     // interactions (e.g. waking to check the time). A phone may still be unused
+     // while its owner is awake: all outputs remain explicitly unconfirmed guesses.
      for(int back=0;back<8;back++){
         Calendar morning=Calendar.getInstance();morning.set(Calendar.HOUR_OF_DAY,0);morning.set(Calendar.MINUTE,0);
         morning.set(Calendar.SECOND,0);morning.set(Calendar.MILLISECOND,0);morning.add(Calendar.DAY_OF_YEAR,-back);
         long midnight=morning.getTimeInMillis();
-        long rangeStart=midnight-8*60*60*1000L,rangeEnd=Math.min(now,midnight+12*60*60*1000L);
-        long bestStart=0,bestEnd=0,bestDuration=0;
-        for(int i=1;i<interactions.size();i++){
-            long prev=interactions.get(i-1),next=interactions.get(i);
-            if(prev<rangeStart||prev>midnight+4*60*60*1000L||next<midnight+4*60*60*1000L||next>rangeEnd)continue;
-            long gap=next-prev;
-            if(gap>=3*60*60*1000L&&gap<=13*60*60*1000L&&gap>bestDuration){bestDuration=gap;bestStart=prev;bestEnd=next;}
+        long rangeStart=midnight-6L*3600_000L,rangeEnd=Math.min(now,midnight+12L*3600_000L);
+        List<Long> night=new ArrayList<>();
+        for(Long t:interactions)if(t>=rangeStart&&t<=rangeEnd)night.add(t);
+        long bestStart=0,bestEnd=0,bestDuration=0,bestScore=-1;
+        int bestInterrupted=0;
+        for(int i=0;i<night.size()-1;i++){
+            long prev=night.get(i);
+            if(prev>midnight+4L*3600_000L)break;
+            for(int j=i+1;j<night.size();j++){
+                long next=night.get(j),gap=next-prev;
+                // A 13-hour-plus phone-free period is not reliably a sleep interval.
+                if(gap>13L*3600_000L)break;
+                if(gap<3L*3600_000L)continue;
+                if(next<midnight+4L*3600_000L||next>rangeEnd)continue;
+                int interruptions=j-i-1;
+                if(interruptions>0){
+                    // At most one short wake-up cluster, no more than 20 min long;
+                    // each side must have at least 90 min of phone inactivity.
+                    long first=night.get(i+1),last=night.get(j-1);
+                    if(first-prev<90L*60_000L||next-last<90L*60_000L)continue;
+                    if(last-first>20L*60_000L)break;
+                    if(interruptions>8)break;
+                }
+                // Favor clean long gaps over bridged ones of similar duration.
+                long score=gap-(interruptions>0?30L*60_000L:0);
+                if(score>bestScore){bestScore=score;bestDuration=gap;bestStart=prev;bestEnd=next;bestInterrupted=interruptions;}
+            }
         }
         if(bestDuration==0)continue;
-        Calendar night=Calendar.getInstance();night.setTimeInMillis(midnight);night.add(Calendar.DAY_OF_YEAR,-1);
+        Calendar bedtime=Calendar.getInstance();bedtime.setTimeInMillis(bestStart);
+        Calendar wakeTime=Calendar.getInstance();wakeTime.setTimeInMillis(bestEnd);
+        int bedHour=bedtime.get(Calendar.HOUR_OF_DAY),wakeHour=wakeTime.get(Calendar.HOUR_OF_DAY);
+        boolean plausibleBed=bedHour>=20||bedHour<=3,plausibleWake=wakeHour>=5&&wakeHour<=10;
+        String confidence=bestDuration>=5L*3600_000L&&bestDuration<=10L*3600_000L&&plausibleBed&&plausibleWake&&bestInterrupted==0?"high":
+            bestDuration>=4L*3600_000L&&plausibleBed&&plausibleWake?"medium":"low";
+        Calendar nightDate=Calendar.getInstance();nightDate.setTimeInMillis(midnight);nightDate.add(Calendar.DAY_OF_YEAR,-1);
         SimpleDateFormat date=new SimpleDateFormat("yyyy-MM-dd",Locale.US),time=new SimpleDateFormat("HH:mm",Locale.US);
         JSONObject estimate=new JSONObject();
-        try{estimate.put("night",date.format(night.getTime()));estimate.put("morning",date.format(new Date(midnight)));
+        try{estimate.put("night",date.format(nightDate.getTime()));estimate.put("morning",date.format(new Date(midnight)));
             estimate.put("bed",time.format(new Date(bestStart)));estimate.put("wake",time.format(new Date(bestEnd)));
-            estimate.put("gapMinutes",Math.round(bestDuration/60000f));estimate.put("source","device_usage");result.put(estimate);}catch(Exception ignored){}
+            estimate.put("gapMinutes",Math.round(bestDuration/60000f));estimate.put("source","device_usage");
+            estimate.put("confidence",confidence);estimate.put("nightInteractions",bestInterrupted);
+            result.put(estimate);}catch(Exception ignored){}
      }
      return result;
  }

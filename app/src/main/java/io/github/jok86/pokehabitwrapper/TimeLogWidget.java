@@ -21,6 +21,8 @@ public final class TimeLogWidget extends AppWidgetProvider {
         R.id.widget_emoji_4,R.id.widget_emoji_5,R.id.widget_emoji_6};
     private static final int[] COUNTS={R.id.widget_count_1,R.id.widget_count_2,R.id.widget_count_3,
         R.id.widget_count_4,R.id.widget_count_5,R.id.widget_count_6};
+    private static final int[] ENDS={R.id.widget_end_1,R.id.widget_end_2,R.id.widget_end_3,
+        R.id.widget_end_4,R.id.widget_end_5,R.id.widget_end_6};
     private static final int[] NAMES={R.id.widget_name_1,R.id.widget_name_2,R.id.widget_name_3,
         R.id.widget_name_4,R.id.widget_name_5,R.id.widget_name_6};
     private static final int[] TIMES={R.id.widget_time_1,R.id.widget_time_2,R.id.widget_time_3,
@@ -28,7 +30,8 @@ public final class TimeLogWidget extends AppWidgetProvider {
     @Override public void onReceive(Context ctx,Intent i){
         if(i!=null&&ACTION.equals(i.getAction())){
             String id=i.getStringExtra("event_id");
-            if(id!=null)NativeLogStore.record(ctx,id);
+            if("walk".equals(id))WalkTracker.toggle(ctx,NativeLogStore.activeUser(ctx));
+            else if(id!=null)NativeLogStore.record(ctx,id);
             refresh(ctx);
             return;
         }
@@ -46,6 +49,7 @@ public final class TimeLogWidget extends AppWidgetProvider {
         JSONObject summary=NativeLogStore.summary(ctx);
         for(int widgetId:ids){
             RemoteViews v=new RemoteViews(ctx.getPackageName(),R.layout.time_log_widget);
+            JSONObject live=WalkTracker.session(ctx,NativeLogStore.activeUser(ctx));
             v.setTextViewText(R.id.widget_last,NativeLogStore.last(ctx));
             v.setViewVisibility(R.id.widget_row_2,defs.length()>3?View.VISIBLE:View.GONE);
             for(int idx=0;idx<6;idx++){
@@ -56,10 +60,23 @@ public final class TimeLogWidget extends AppWidgetProvider {
                 JSONObject info=summary.optJSONObject(key);
                 int count=info==null?0:info.optInt("count",0);
                 String time=info==null?"":info.optString("clock","");
+                String endClock=info==null?"":info.optString("endClock","");
+                boolean walk="walk".equals(key),running=walk&&live!=null;
                 v.setTextViewText(EMOJIS[idx],d.optString("emoji","📌"));
+                v.setViewVisibility(COUNTS[idx],"repeat".equals(d.optString("mode"))?View.VISIBLE:View.GONE);
                 v.setTextViewText(COUNTS[idx],count>99?"99+회":count+"회");
                 v.setTextViewText(NAMES[idx],d.optString("name","기록"));
-                v.setTextViewText(TIMES[idx],time.matches("(?:[01]\\d|2[0-3]):[0-5]\\d")?time:"＋ 기록");
+                v.setViewVisibility(ENDS[idx],walk?View.VISIBLE:View.GONE);
+                v.setInt(CELLS[idx],"setBackgroundResource",running?R.drawable.widget_walking_active:R.drawable.widget_button);
+                if(walk){
+                    String st=running?live.optString("clock",""):time;
+                    v.setTextViewTextSize(TIMES[idx],android.util.TypedValue.COMPLEX_UNIT_SP,13);
+                    v.setTextViewText(TIMES[idx],st.isEmpty()?"＋ 시작":"시 "+st);
+                    v.setTextViewText(ENDS[idx],running?"● 진행 중":endClock.isEmpty()?"종료 —":"끝 "+endClock);
+                }else{
+                    v.setTextViewTextSize(TIMES[idx],android.util.TypedValue.COMPLEX_UNIT_SP,16);
+                    v.setTextViewText(TIMES[idx],time.matches("(?:[01]\\d|2[0-3]):[0-5]\\d")?time:"＋ 기록");
+                }
                 Intent tap=new Intent(ctx,TimeLogWidget.class).setAction(ACTION);
                 tap.setData(Uri.parse("pokehabit-widget://record/"+Uri.encode(key)));
                 tap.putExtra("event_id",key);

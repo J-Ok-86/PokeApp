@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
     <application android:label="PokeHabit" android:usesCleartextTraffic="false"
         android:allowBackup="false" android:theme="@style/AppTheme"
         android:icon="@drawable/app_icon" android:supportsRtl="true">
@@ -17,6 +20,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service android:name=".WalkService" android:exported="false" android:foregroundServiceType="health" />
         <receiver android:name=".NotificationReceiver" android:exported="false" />
         <receiver android:name=".TimeLogWidget" android:exported="true">
             <intent-filter>
