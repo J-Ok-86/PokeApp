@@ -229,7 +229,9 @@ public final class MainActivity extends Activity {
     }
     private void status(androidx.webkit.JavaScriptReplyProxy proxy){
         JSONObject obj=response("status","");
-        try{obj.put("exact",AlarmStore.exactGranted(this));obj.put("notifications",AlarmStore.notificationsGranted(this));obj.put("notice",AlarmStore.status(this));}catch(Exception ignored){}
+        try{obj.put("exact",AlarmStore.exactGranted(this));obj.put("notifications",AlarmStore.notificationsGranted(this));obj.put("notice",AlarmStore.status(this));obj.put("usageAccess",SleepEstimator.permission(this));
+            if(SleepEstimator.permission(this))obj.put("sleepEstimates",SleepEstimator.estimates(this));
+            obj.put("widgetLogs",NativeLogStore.pending(this,NativeLogStore.activeUser(this)));}catch(Exception ignored){}
         reply(proxy,obj);
     }
     private void handleMessage(String raw,androidx.webkit.JavaScriptReplyProxy proxy){
@@ -242,9 +244,20 @@ public final class MainActivity extends Activity {
                     if(!user.matches("[a-zA-Z0-9_-]{2,24}"))return;
                     JSONArray items=msg.optJSONArray("items");if(items==null)return;
                     int n=AlarmStore.replace(this,user,items);
+                    JSONArray buttons=msg.optJSONArray("widgetButtons");
+                    if(buttons!=null)NativeLogStore.configure(this,user,buttons);
                     status(proxy);break;
                 }
                 case "permissions": requestAlarmPermissions();status(proxy);break;
+                case "usagePermission":
+                    try{startActivity(SleepEstimator.permissionSettings(this));}
+                    catch(Exception e){startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS));}
+                    status(proxy);break;
+                case "ackWidgetLogs":{
+                    String actor=msg.optString("userId");JSONArray ids=msg.optJSONArray("ids");
+                    if(actor.equals(NativeLogStore.activeUser(this))&&ids!=null)NativeLogStore.acknowledge(this,actor,ids);
+                    break;
+                }
                 case "appearance":
                     applySystemBarTheme(!"dark".equals(msg.optString("theme","light")));
                     break;
@@ -303,7 +316,9 @@ public final class MainActivity extends Activity {
     private void updateStatusInWeb(){
         if(web==null||!bridgeAvailable||!isTrustedAppPath(Uri.parse(web.getUrl()==null?"":web.getUrl())))return;
         JSONObject obj=response("status","");
-        try{obj.put("exact",AlarmStore.exactGranted(this));obj.put("notifications",AlarmStore.notificationsGranted(this));obj.put("notice",AlarmStore.status(this));}catch(Exception ignored){}
+        try{obj.put("exact",AlarmStore.exactGranted(this));obj.put("notifications",AlarmStore.notificationsGranted(this));obj.put("notice",AlarmStore.status(this));obj.put("usageAccess",SleepEstimator.permission(this));
+            if(SleepEstimator.permission(this))obj.put("sleepEstimates",SleepEstimator.estimates(this));
+            obj.put("widgetLogs",NativeLogStore.pending(this,NativeLogStore.activeUser(this)));}catch(Exception ignored){}
         web.evaluateJavascript("if(typeof nativeAlarmMessage==='function')nativeAlarmMessage({data:"+JSONObject.quote(obj.toString())+"})",null);
     }
     @Override protected void onResume(){super.onResume();AlarmStore.rescheduleAll(this);updateStatusInWeb();}

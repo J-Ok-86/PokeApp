@@ -1,3 +1,28 @@
+# PokeHabit Android Wrapper v1.0.3 — 갤럭시 화면 수정 · 지속 업데이트
+
+- **APK Wrapper만 변경:** Android 15+ 시스템 상단 상태바가 웹앱 시계/날씨와 겹치지 않도록 여백 확보.
+- **WebView 글자 작음 개선:** 모바일 viewport, 자동 글자 크기, WebView 내부 배율 115%(시스템 글자 설정이 더 크면 최대 140%).
+- **HTML/CSS/JS와 JSON 형식은 변경하지 않음.** PWA와 GitHub Pages는 그대로 유지.
+- **고정 서명키:** GitHub Actions Secrets의 `POKEHABIT_DEBUG_KEYSTORE_B64`를 빌드 때 복원해 동일한 서명키로 APK 생성.
+- **versionCode: 4 / versionName: 1.0.3 / package ID 유지** (`io.github.jok86.pokehabitwrapper`).
+
+## 초기 1회 설정 — 갤럭시 Codespaces
+
+1. 새 소스 ZIP 또는 패치 ZIP을 PokeApp 저장소 루트에 업로드하고 압축 해제.
+2. **한 번만** `bash scripts/prepare-signing.sh` 실행. 생성된 서명키는 GitHub Secrets에만 업로드하며 공개 저장소에 올라가지 않습니다.
+3. `git add -A && git commit -m 'Fix APK display and stable signing' && git push origin main` 실행.
+4. GitHub Actions 빌드 완료 → Artifacts의 APK 다운로드 → 설치.
+
+## 정말 앱을 지워야 하나?
+
+첫 v1.0.0 설치본은 CI의 임시 디버그 서명키를 사용했습니다. **그 키를 확보하지 못했다면** 새 서명키로 만든 v1.0.3은 기존 APK 위에 설치되지 않습니다.
+업데이트 설치가 거부될 경우, **먼저 JSON Save → 앱 제거 → v1.0.3 설치 → JSON Load** 순서로 진행하세요.
+이후에는 동일한 GitHub Secret 서명키를 유지하면 **삭제하지 않고 APK 덮어쓰기 업데이트**가 가능합니다(다음 버전의 versionCode 증가 필요).
+
+**주의:** 절대로 서명키 파일을 공개 저장소에 커밋하지 마세요. 서명키의 개인 백업을 안전한 곳에 보관하고, 앱 업데이트용 GitHub Secret을 삭제하지 마세요.
+
+---
+
 # PokeHabit Android Wrapper v1.0.0 / HTML v1.7.130
 
 ## 목적
@@ -20,7 +45,7 @@
 1. **이 Android 프로젝트만** 별도의 GitHub 저장소(예: `pokehabit-android-wrapper`)에 올립니다. `app/`, `.github/workflows/`, `build.gradle`, `settings.gradle`, `gradle.properties`가 저장소 루트에 있어야 합니다.
 2. 저장소의 **Actions → Build PokeHabit Android APK → Run workflow** 실행.
 3. 완료된 실행의 **Artifacts → `PokeHabit-wrapper-debug-apk`** 다운로드 후 압축을 풀어 `app-debug.apk`를 갤럭시에 설치합니다.
-4. 주의: GitHub Actions의 **Debug APK는 실행마다 임시 서명키가 달라질 수 있어** 이후 APK를 덮어 설치하지 못할 수 있습니다. 데이터가 있는 실제 사용 기기는 아래 B 방법으로 **고정 서명키**를 설정하고 안정적으로 업데이트하는 걸 권장합니다.
+4. 주의: 이번 v1.0.3부터 GitHub Actions Secrets에 고정된 디버그 서명키가 있으므로, 이후 동일한 패키지 ID와 키를 유지하는 APK는 업데이트 설치할 수 있습니다.
 
 ## APK 만들기 B: Android Studio (장기 사용 추천)
 
